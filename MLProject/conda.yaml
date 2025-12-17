@@ -1,0 +1,14 @@
+name: diabetes-env
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - mlflow==2.19.0
+      - dagshub
+      - scikit-learn
+      - pandas
+      - matplotlib
+      - seaborn
+      - virtualenv

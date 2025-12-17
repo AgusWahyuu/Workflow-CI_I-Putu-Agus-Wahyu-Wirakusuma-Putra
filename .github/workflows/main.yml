@@ -1,0 +1,117 @@
+name: CI Pipeline to Docker Hub
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # Set up job & Checkout
+      - name: Run actions/checkout@v3
+        uses: actions/checkout@v3
+
+      # Set up Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.11"
+
+      # Check Env
+      - name: Check Env
+        run: |
+          python --version
+          pip --version
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install mlflow==2.19.0 dagshub pandas scikit-learn matplotlib seaborn virtualenv
+
+      # Run mlflow project
+      - name: Run mlflow project
+        env:
+          DAGSHUB_REPO_OWNER: ${{ secrets.DAGSHUB_REPO_OWNER }}
+          DAGSHUB_REPO_NAME: ${{ secrets.DAGSHUB_REPO_NAME }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          cd MLProject
+          mlflow run . --env-manager=local
+
+      # Get latest MLflow run_id
+      - name: Get latest MLflow run_id
+        id: get_run_id
+        run: |
+          cd MLProject
+          if [ -f "run_id.txt" ]; then
+            RUN_ID=$(cat run_id.txt)
+            echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
+            echo "Latest Run ID detected: $RUN_ID"
+          else
+            echo "Error: run_id.txt not found!"
+            exit 1
+          fi
+
+      # Install Python dependencies for Docker Build
+      - name: Install Python dependencies
+        run: |
+          pip install virtualenv mlserver mlserver-mlflow
+
+      # Upload to Github
+      - name: Upload to Github
+        run: |
+          cd MLProject
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+          # Tambahkan file jika ada
+          if [ -f "confusion_matrix.png" ]; then git add confusion_matrix.png; fi
+          if [ -f "metric_info.json" ]; then git add metric_info.json; fi
+          if [ -f "estimator.html" ]; then git add estimator.html; fi
+
+          # Cek status dulu, kalau tidak ada perubahan, jangan commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Auto-save artifacts from Run ${{ env.RUN_ID }}"
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+      # Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Build Docker Model
+      - name: Build Docker Model
+        env:
+          MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_REPO_OWNER }}/${{ secrets.DAGSHUB_REPO_NAME }}.mlflow
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          echo "Building Docker Image for Run ID: ${{ env.RUN_ID }}"
+          mlflow models build-docker \
+            -m "runs:/${{ env.RUN_ID }}/model" \
+            -n "model-image" \
+            --enable-mlserver
+
+      # Tag Docker Image
+      - name: Tag Docker Image
+        run: |
+          docker tag model-image ${{ secrets.DOCKERHUB_USERNAME }}/diabetes-prediction:latest
+          docker tag model-image ${{ secrets.DOCKERHUB_USERNAME }}/diabetes-prediction:${{ env.RUN_ID }}
+
+      # Push Docker Image
+      - name: Push Docker Image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/diabetes-prediction:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/diabetes-prediction:${{ env.RUN_ID }}
