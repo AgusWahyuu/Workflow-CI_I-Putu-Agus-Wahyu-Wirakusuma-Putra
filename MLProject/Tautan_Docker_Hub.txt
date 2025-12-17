@@ -1,0 +1,4 @@
+https://app.docker.com/accounts/aguswahyuu
+
+
+https://hub.docker.com/repository/docker/aguswahyuu/diabetes-prediction/tags
